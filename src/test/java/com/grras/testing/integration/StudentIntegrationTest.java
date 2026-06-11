@@ -10,9 +10,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
-import org.springframework.test.annotation.Rollback;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.transaction.annotation.Transactional;
 
 import static org.hamcrest.Matchers.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -21,39 +19,30 @@ import static org.assertj.core.api.Assertions.*;
 
 /**
  * ============================================================
- *  INTEGRATION TESTS — Full Stack (Controller → Service → Repository → H2)
+ *  INTEGRATION TESTS — Full Stack (Controller → Service → Repository → MySQL)
  * ============================================================
  *
  *  @SpringBootTest
  *      → Loads the FULL Spring Application Context.
  *        All beans (@Controller, @Service, @Repository) are loaded.
- *        Uses H2 in-memory DB (from test/resources/application.properties).
+ *        Uses MySQL DB configured in application.properties.
  *        This is the closest to running the real application.
  *
  *  @AutoConfigureMockMvc
  *      → Injects MockMvc automatically. Allows sending fake HTTP requests
  *        without starting an actual HTTP server (Tomcat not started).
  *
- *  @Transactional (class level)
- *      → Each test runs in a transaction.
- *        By default, transaction is ROLLED BACK after each test.
- *        This keeps tests isolated — no leftover data.
- *
- *  @Rollback(true)
- *      → Explicitly marks that the transaction should be rolled back.
- *        Default behavior when @Transactional is on test class.
+ *  @BeforeEach + @AfterEach (deleteAll)
+ *      → Since we are using real MySQL (not in-memory), we manually
+ *        clean up data before and after each test to keep tests isolated.
+ *        This replaces the @Transactional + @Rollback approach.
  *
  *  @TestMethodOrder
  *      → Controls the order in which test methods run.
- *
- *  @ActiveProfiles("test")
- *      → Activates "test" profile (can load application-test.properties).
- *        Here H2 config is in application.properties under test/resources.
  * ============================================================
  */
-@SpringBootTest                                         // ← Full Spring context
+@SpringBootTest                                         // ← Full Spring context + MySQL
 @AutoConfigureMockMvc                                   // ← Auto-injects MockMvc
-@Transactional                                          // ← Rollback after each test
 @TestMethodOrder(MethodOrderer.DisplayName.class)       // ← Run in display name order
 @DisplayName("Student Integration Tests")
 class StudentIntegrationTest {
@@ -71,7 +60,8 @@ class StudentIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        // This data is saved but rolled back after each test (due to @Transactional)
+        studentRepository.deleteAll();                  // ← Clean MySQL before each test
+
         savedStudent = studentRepository.save(
             Student.builder()
                 .name("Ashish Sharma")
@@ -81,12 +71,16 @@ class StudentIntegrationTest {
         );
     }
 
+    @AfterEach
+    void tearDown() {
+        studentRepository.deleteAll();                  // ← Clean MySQL after each test
+    }
+
     // ============================================================
     //  POST /api/students — Create Student
     // ============================================================
 
     @Test
-    @Rollback(true)                                     // ← Explicit rollback (same as default)
     @DisplayName("POST /api/students - should create student and return 201")
     void shouldCreateStudentAndReturn201() throws Exception {
         Student newStudent = Student.builder()
@@ -110,7 +104,7 @@ class StudentIntegrationTest {
         // ashish@example.com already saved in @BeforeEach
         Student duplicate = Student.builder()
                 .name("Another Ashish")
-                .email("ashish@example.com")    // same email
+                .email("ashish@example.com")            // same email
                 .grade(5)
                 .build();
 
@@ -124,9 +118,9 @@ class StudentIntegrationTest {
     @DisplayName("POST /api/students - should return 400 when validation fails")
     void shouldReturn400WhenValidationFails() throws Exception {
         Student invalidStudent = Student.builder()
-                .name("")           // blank name → @NotBlank fails
-                .email("not-an-email")  // invalid email → @Email fails
-                .grade(15)          // > 10 → @Max fails
+                .name("")                               // blank name → @NotBlank fails
+                .email("not-an-email")                  // invalid email → @Email fails
+                .grade(15)                              // > 10 → @Max fails
                 .build();
 
         mockMvc.perform(post("/api/students")
@@ -176,9 +170,9 @@ class StudentIntegrationTest {
     @DisplayName("PUT /api/students/{id} - should update student successfully")
     void shouldUpdateStudentSuccessfully() throws Exception {
         Student updated = Student.builder()
-                .name("Ashish Kumar")               // name changed
-                .email("ashish@example.com")        // same email
-                .grade(10)                          // grade updated
+                .name("Ashish Kumar")                   // name changed
+                .email("ashish@example.com")            // same email
+                .grade(10)                              // grade updated
                 .build();
 
         mockMvc.perform(put("/api/students/{id}", savedStudent.getId())
@@ -199,7 +193,7 @@ class StudentIntegrationTest {
         mockMvc.perform(delete("/api/students/{id}", savedStudent.getId()))
                 .andExpect(status().isNoContent());                 // HTTP 204
 
-        // Verify directly in DB that student is gone
+        // Verify directly in MySQL that student is gone
         assertThat(studentRepository.findById(savedStudent.getId())).isEmpty();
     }
 
